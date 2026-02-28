@@ -257,3 +257,111 @@ Bulk 操作会记录在 audit 日志中：
 curl "https://your-worker.workers.dev/api/audit?limit=10" \
   -H "X-Admin-Token: your-secret-token"
 ```
+
+---
+
+## 🔧 CLI 工具（推荐）
+
+项目提供了统一的 CLI 工具来管理别名，位于 `tools/cli/bin/infinite-email.js`。
+
+### 安装
+
+```bash
+cd tools/cli
+npm install
+```
+
+### 配置
+
+复制并配置环境变量：
+
+```bash
+cp .env.local.example .env.local
+# 编辑 .env.local，填入以下配置：
+
+# Worker API（必需）
+WORKER_URL=https://your-worker.workers.dev
+ADMIN_TOKEN=your-admin-secret-token
+
+# IMAP 配置（fetch 命令需要）
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_USER=your-email@gmail.com
+IMAP_PASS=your-app-password
+```
+
+### 使用方法
+
+```bash
+# 方式1: 直接运行
+node tools/cli/bin/infinite-email.js <command>
+
+# 方式2: 链接到 PATH（推荐）
+# 在 .env.local 或 package.json 目录运行
+npm start -- <command>
+```
+
+### 命令列表
+
+| 命令 | 说明 |
+|------|------|
+| `generate <service> [count]` | 生成别名（调用 Worker bulk API） |
+| `list [service]` | 列出别名（可选按 service 过滤） |
+| `revoke <alias>` | 撤销别名 |
+| `lookup <address>` | 解析别名信息（提取 service/date） |
+| `fetch <service>` | 从邮箱抓取验证码（调用 codefetch） |
+
+### 使用示例
+
+```bash
+# 生成别名
+node tools/cli/bin/infinite-email.js generate amazon 10
+node tools/cli/bin/infinite-email.js generate google 5
+
+# 列出别名
+node tools/cli/bin/infinite-email.js list
+node tools/cli/bin/infinite-email.js list amazon
+
+# 撤销别名
+node tools/cli/bin/infinite-email.js revoke amazon-202602-a1b2c3
+
+# 解析别名信息
+node tools/cli/bin/infinite-email.js lookup amazon-202602-d4e5f6@yourdomain.com
+
+# 抓取验证码
+node tools/cli/bin/infinite-email.js fetch amazon
+node tools/cli/bin/infinite-email.js fetch google --limit 20
+
+# 输出 JSON 格式
+node tools/cli/bin/infinite-email.js list amazon --json
+node tools/cli/bin/infinite-email.js generate google 5 --json
+```
+
+### 输出示例
+
+```
+# generate 命令
+✓ Generated 5/5 aliases for "google":
+
++-------------------------+---------+---------+------------+------+
+| Alias                   | Service | Status  | Created   | Note |
++-------------------------+---------+---------+------------+------+
+| google-202602-a1b2c3d4 | google  | active  | 2026-02-28 | -    |
+| google-202602-e5f6g7h8 | google  | active  | 2026-02-28 | -    |
++-------------------------+---------+---------+------------+------+
+
+# lookup 命令
+🔍 Alias Analysis:
+
+  Original: amazon-202602-a1b2c3@yourdomain.com
+  Alias:    amazon-202602-a1b2c3
+  Service:  amazon
+  Date:     2026-02 (202602)
+  Suffix:   a1b2c3
+```
+
+### 获取帮助
+
+```bash
+node tools/cli/bin/infinite-email.js --help
+```
