@@ -22,18 +22,25 @@ export default {
 
     // API Routes
     try {
-      // GET /api/aliases - List all aliases
+      // GET /api/aliases - List all aliases (with optional service filter)
       if (path === '/api/aliases' && method === 'GET') {
-        const stmt = env.DB.prepare(`
-          SELECT alias, status, created_at, note 
-          FROM aliases 
-          ORDER BY created_at DESC
-          LIMIT 100
-        `)
-        const results = await stmt.all()
+        const serviceFilter = url.searchParams.get('service')
+        
+        let query = 'SELECT alias, status, created_at, note, service, purpose FROM aliases'
+        const params: any[] = []
+        
+        if (serviceFilter) {
+          query += ' WHERE service = ?'
+          params.push(serviceFilter)
+        }
+        
+        query += ' ORDER BY created_at DESC LIMIT 100'
+        
+        const stmt = env.DB.prepare(query)
+        const results = params.length > 0 ? await stmt.bind(...params).all() : await stmt.all()
         
         // Log audit
-        await logAudit(env, null, 'list_aliases', request)
+        await logAudit(env, null, 'list_aliases', request, { service: serviceFilter })
         
         return Response.json({ aliases: results.results || [] })
       }
@@ -64,6 +71,67 @@ export default {
           status: 'active',
           note
         }, { status: 201 })
+      }
+
+      // POST /api/aliases/bulk - Bulk create aliases
+      if (path === '/api/aliases/bulk' && method === 'POST') {
+        const body = await request.json().catch(() => ({}))
+        const service = (body.service || '').toString().slice(0, 32)
+        const count = Math.min(parseInt(body.count) || 1, 50)  // Max 50
+        const purpose = (body.purpose || '').toString().slice(0, 128)
+        const note = (body.note || '').toString().slice(0, 256)
+
+        if (!service) {
+          return Response.json({ error: 'service is required' }, { status: 400 })
+        }
+
+        // Generate alias format: service-yyyymm-rand(6~8)
+        const now = new Date()
+        const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+        const randLen = 6 + Math.floor(Math.random() * 3)  // 6-8 chars
+        
+        const results: any[] = []
+        const errors: string[] = []
+
+        for (let i = 0; i < count; i++) {
+          const rand = crypto.randomUUID().slice(0, randLen)
+          const alias = `${service}-${yyyymm}-${rand}`
+          const fullAddress = env.DOMAIN ? `${alias}@${env.DOMAIN}` : alias
+
+          try {
+            const stmt = env.DB.prepare(`
+              INSERT INTO aliases (alias, status, note, service, purpose) VALUES (?, 'active', ?, ?, ?)
+            `)
+            await stmt.bind(alias, note, service, purpose).run()
+
+            results.push({
+              alias,
+              address: fullAddress,
+              status: 'active',
+              note,
+              service,
+              purpose
+            })
+          } catch (e: any) {
+            errors.push(`Failed to create ${alias}: ${e.message}`)
+          }
+        }
+
+        // Log audit for bulk action
+        await logAudit(env, null, 'bulk_create', request, { 
+          service, 
+          count: results.length, 
+          purpose,
+          requested: count,
+          created: results.length
+        })
+
+        return Response.json({
+          created: results.length,
+          requested: count,
+          aliases: results,
+          errors: errors.length > 0 ? errors : undefined
+        }, { status: errors.length === count ? 500 : 201 })
       }
 
       // DELETE /api/aliases/:alias - Revoke alias

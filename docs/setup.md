@@ -173,3 +173,87 @@ Workers 负责：
 - 记录使用审计（KV/D1）
 
 见 docs/worker-design.md。
+
+---
+
+## 🔧 Bulk API 使用示例
+
+Workers 提供 Bulk API 批量生成别名：
+
+### POST /api/aliases/bulk
+
+```bash
+# 批量生成 20 个 amazon 服务的别名
+curl -X POST https://your-worker.workers.dev/api/aliases/bulk \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-secret-token" \
+  -d '{
+    "service": "amazon",
+    "count": 20,
+    "purpose": "shopping",
+    "note": "for online purchases"
+  }'
+```
+
+**请求参数：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| service | ✅ | 服务标识（最大32字符） |
+| count | ❌ | 生成数量（默认1，最大50） |
+| purpose | ❌ | 用途说明（最大128字符） |
+| note | ❌ | 备注（最大256字符） |
+
+**响应示例：**
+
+```json
+{
+  "created": 20,
+  "requested": 20,
+  "aliases": [
+    {
+      "alias": "amazon-202602-a1b2c3",
+      "address": "amazon-202602-a1b2c3@yourdomain.com",
+      "status": "active",
+      "service": "amazon",
+      "purpose": "shopping"
+    }
+  ]
+}
+```
+
+### GET /api/aliases?service=xxx
+
+支持按 service 过滤查询：
+
+```bash
+# 查询所有 amazon 服务的别名
+curl "https://your-worker.workers.dev/api/aliases?service=amazon" \
+  -H "X-Admin-Token: your-secret-token"
+```
+
+**响应示例：**
+
+```json
+{
+  "aliases": [
+    {
+      "alias": "amazon-202602-a1b2c3",
+      "status": "active",
+      "created_at": "2026-02-28 10:00:00",
+      "note": "for online purchases",
+      "service": "amazon",
+      "purpose": "shopping"
+    }
+  ]
+}
+```
+
+### 审计日志
+
+Bulk 操作会记录在 audit 日志中：
+
+```bash
+curl "https://your-worker.workers.dev/api/audit?limit=10" \
+  -H "X-Admin-Token: your-secret-token"
+```
