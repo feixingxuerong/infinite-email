@@ -4,8 +4,10 @@ compatibility_date = "2026-02-28"
 
 [vars]
 # DOMAIN = "example.com"
+# ADMIN_TOKEN = "your-secret-token"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "infinite_email"
 database_id = ""
+migrations_dir = "src/migrations"
