@@ -1,119 +1,175 @@
 # Setup: 域名 + Cloudflare 实现 catch-all（无限别名）
 
-## 0. 前置
+> ⏱️ **快速导航**
+> - [最简版（3 步）](#最简版3-步)
+> - [详细版（完整步骤）](#详细版完整步骤)
+> - [DNS 记录清单](#dns-记录清单)
+> - [常见问题排查](#常见问题排查)
+
+---
+
+## ⏩ 最简版（3 步）
+
+如果你只想最快用起来，看这 3 步：
+
+1. **买域名** → 选一个你喜欢的域名服务商购买
+2. **托管到 Cloudflare** → 把域名的 NS 改成 Cloudflare 提供的两个地址
+3. **开启 Email Routing** → 
+   - Cloudflare Dashboard → Email → Email Routing → Enable
+   - 添加你的真实邮箱（比如 Gmail）作为 Destination 并验证
+   - 开启 **Catch-all address**
+
+完成！`任意别名@你的域名.com` 都会转发到你的真实邮箱。
+
+---
+
+## 📖 详细版（完整步骤）
+
+### 0. 前置准备
 
 - 一个你拥有并可管理 DNS 的域名
 - 一个真实收件邮箱（Gmail/Outlook/Fastmail/企业邮箱）
 - Cloudflare 账号
-- Wrangler CLI (`npm install -g wrangler`)
 
-## 1. 把域名托管到 Cloudflare
+### 1. 购买域名
 
-1. 在 Cloudflare 添加站点
-2. 按提示把域名 NS 改到 Cloudflare
-3. 等待生效（通常 5-30 分钟）
+可选服务商（推荐）：
+- Namesilo（便宜、稳定）
+- Cloudflare Registrar（直接在 Cloudflare 买，管理最方便）
+- Gandi、Namecheap
 
-## 2. 开启 Cloudflare Email Routing
+### 2. 把域名托管到 Cloudflare
 
-1. Cloudflare Dashboard → Email → Email Routing
-2. 选择你的域名 → Enable
-3. 添加 Destination address（你的真实邮箱）并完成验证
-4. 打开 Catch-all address（接住所有未匹配的别名）
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
+2. 点击「添加站点」→ 输入你的域名
+3. 选择免费计划（Personal 免费）
+4. **重要**：按提示把域名 NS 记录改到 Cloudflare 提供的两个地址：
+   - `ns1.cloudflare.com`
+   - `ns2.cloudflare.com`
+5. 等待生效（通常 5-30 分钟，复杂域名可能 24-48 小时）
 
-现在你就拥有了：
-- 任意别名 `anything@yourdomain.com` 都能被转发到真实邮箱
+> 💡 **验证 NS 生效**：`whois 你的域名.com` 或使用 https://www.whatsmydns.net 查看 NS 是否已更新
 
-## 3. 进阶：规则化管理（Workers）
+### 3. 开启 Cloudflare Email Routing
 
-### 3.1 初始化 D1 数据库
+1. Cloudflare Dashboard → **Email** → **Email Routing**
+2. 选择你的域名 → 点击 **Enable Email Routing**
+3. **添加 Destination address**（你的真实收件邮箱）
+   - 输入你的邮箱地址（比如 `yourname@gmail.com`）
+   - 点击发送验证码
+   - 去真实邮箱收验证邮件，输入验证码完成验证
+4. **开启 Catch-all address**
+   - 点击「创建 Catch-all」
+   - 选择转发到已验证的 Destination address
 
-```bash
-cd worker
+### 4. 测试 Catch-all
 
-# 创建 D1 数据库
-wrangler d1 create infinite_email
+用任意邮箱给 `test123@你的域名.com` 发邮件，应该能收到转发。
 
-# 把 database_id 填入 wrangler.toml
+---
 
-# 运行 migrations（创建表）
-wrangler d1 migrations apply infinite-email
+## 📋 DNS 记录清单
+
+配置完 Email Routing 后，你的 DNS 应该有以下记录：
+
+### MX 记录（邮件接收）
+
+Cloudflare Email Routing 会自动添加，**通常不需要手动配置**：
+
+| 类型 | 名称 | 优先级 | 值 |
+|------|------|--------|-----|
+| MX | @ (或留空) | 10 | `inbound-smtp.us-west-2.amazonaws.com`（或你所在区域的地址）|
+
+> ⚠️ Cloudflare Email Routing 使用 AWS SES 作为底层，实际 MX 记录由 Cloudflare 自动管理。**不要手动添加 MX**，否则可能冲突。
+
+### SPF 记录（发件授权）
+
+**强烈建议添加**，防止你发出的邮件被识别为垃圾邮件：
+
+| 类型 | 名称 | 值 |
+|------|------|-----|
+| TXT | @ | `v=spf1 include:_spf.cloudflare.com ~all` |
+
+如果你的域名已经有其他 SPF 记录（比如发件服务商），可以合并：
+```
+v=spf1 include:_spf.google.com include:_spf.cloudflare.com ~all
 ```
 
-### 3.2 配置环境变量
+### DKIM 记录（邮件签名）
 
-在 Cloudflare Dashboard → Workers → infinite-email → Settings → Variables 添加：
+Cloudflare Email Routing **不支持自定义 DKIM**，因为它只负责转发（收件），不负责签名（发件）。
 
-- `DOMAIN`: 你的域名（如 `example.com`）
-- `ADMIN_TOKEN`: 管理 API 的密钥（请使用强随机字符串）
+如果你需要**用自己的域名发件**（比如用 Gmail/Outlook 发送显示为 @yourdomain.com），需要在对应服务商那里获取 DKIM 记录添加。
 
-### 3.3 部署 Worker
+### DMARC 记录（策略声明）
 
-```bash
-wrangler deploy
-```
+建议添加，防止域名被滥用发垃圾邮件：
 
-### 3.4 API 使用方法
+| 类型 | 名称 | 值 |
+|------|------|-----|
+| TXT | _dmarc | `v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@yourdomain.com` |
 
-所有 API 需要在请求头中添加 `X-Admin-Token` 进行认证。
+- `p=quarantine` = 可疑邮件标记为垃圾邮件（推荐）
+- `p=reject` = 直接拒绝可疑邮件（严格，可能误伤）
+- `rua` = 聚合报告接收地址（可选）
 
-```bash
-TOKEN="你的ADMIN_TOKEN"
+---
 
-# 创建别名
-curl -X POST https://your-worker.subdomain.workers.dev/api/aliases \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $TOKEN" \
-  -d '{"prefix": "amazon", "note": "用于亚马逊注册"}'
+## 🔧 常见问题排查
 
-# 查询所有别名
-curl https://your-worker.subdomain.workers.dev/api/aliases \
-  -H "X-Admin-Token: $TOKEN"
+### Q1: 邮件收不到
 
-# 吊销别名
-curl -X DELETE https://your-worker.subdomain.workers.dev/api/aliases/amazon-20260228-abc123 \
-  -H "X-Admin-Token: $TOKEN"
+**检查步骤**：
+1. 确认 Catch-all 已开启（Email Routing 仪表板状态为 Active）
+2. 检查 Destination address 已验证 ✓
+3. 查看 Cloudflare Email Routing 的「Email Activity」日志
+4. 检查垃圾邮件文件夹
+5. 确认你的真实邮箱没有设置过滤规则拦截
 
-# 创建规则
-curl -X POST https://your-worker.subdomain.workers.dev/api/rules \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $TOKEN" \
-  -d '{"type": "deny_prefix", "value": "spam"}'
+### Q2: Cloudflare 提示域名不在 Cloudflare
 
-# 查询规则
-curl https://your-worker.subdomain.workers.dev/api/rules \
-  -H "X-Admin-Token: $TOKEN"
+- 确保 NS 记录已正确修改
+- 等待生效（可能需要 5 分钟-24 小时）
+- 在 Cloudflare 刷新页面
 
-# 查看审计日志
-curl https://your-worker.subdomain.workers.dev/api/audit?limit=20 \
-  -H "X-Admin-Token: $TOKEN"
-```
+### Q3: Destination 邮箱收不到验证邮件
 
-### 3.5 规则类型说明
+- 检查垃圾邮件文件夹
+- 确认邮箱地址拼写正确
+- 尝试换一个邮箱作为 Destination
 
-| 类型 | 说明 | 示例 |
-|------|------|------|
-| `allow_prefix` | 允许此前缀的别名 | `allow_prefix: "amazon"` 允许 `amazon-xxx` |
-| `deny_prefix` | 拒绝此前缀的别名 | `deny_prefix: "spam"` 拒绝 `spam-xxx` |
-| `allow_exact` | 精确允许 | `allow_exact: "newsletter"` |
-| `deny_exact` | 精确拒绝 | `deny_exact: "unsubscribe"` |
+### Q4: MX 记录冲突
 
-### 3.6 本地开发
+- **不要手动添加 MX 记录**，Cloudflare Email Routing 会自动配置
+- 如果之前有旧的 MX 记录，删除它
 
-```bash
-# 启动本地 Worker（会自动创建本地 D1）
-wrangler dev
+### Q5: 发件被识别为垃圾邮件
 
-# 运行 migration（本地）
-wrangler d1 migrations apply infinite-email --local
-```
+- 添加 SPF 记录
+- 如需自定义 DKIM，在发件服务商（ Gmail / SendGrid / AWS SES 等）获取记录并添加
+- 添加 DMARC 记录
 
-## 4. 与 Email Routing 的关系
+### Q6: 域名转移后 Email Routing 失效
 
-- Email Routing 负责邮件转发
-- Worker 负责别名生成、规则管理、审计日志
-- 通过管理面板启用/禁用某些别名（将滥用 alias 加入 deny）
+- 确认域名 NS 已指向 Cloudflare
+- 重新启用 Email Routing
 
-## 5. 安全注意
+---
 
-- `ADMIN_TOKEN` 必须保密，不要提交到 GitHub
-- 生产环境使用 Cloudflare Secrets: `wrangler secret put ADMIN_TOKEN`
+## 🛡️ 安全建议
+
+1. **启用双因素认证** - 保护 Cloudflare 账号
+2. **定期查看邮件活动日志** - 监控异常收件
+3. **DMARC 报告** - 定期检查 rua 收到的报告，了解邮件发送情况
+
+---
+
+## 📚 进阶：规则化管理（Workers）
+
+Cloudflare Email Routing 负责收件转发。
+Workers 负责：
+- 生成别名（比如一次性别名）
+- 管理 allow/deny 列表
+- 记录使用审计（KV/D1）
+
+见 docs/worker-design.md。
