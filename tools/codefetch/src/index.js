@@ -1,91 +1,79 @@
-#!/usr/bin/env node
-
-import dotenv from 'dotenv';
-import yargs from 'yargs';
-import { hideBin } from 'yargs/helpers';
 import Imap from 'imap';
 import { simpleParser } from 'mailparser';
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
+import * as dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config({ path: '.env.local' });
+// Load IMAP config from .env.local
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
-// Configuration from environment
+// Load IMAP config from .env.local
 const IMAP_CONFIG = {
   user: process.env.IMAP_USER,
   password: process.env.IMAP_PASS,
-  host: process.env.IMAP_HOST,
+  host: process.env.IMAP_HOST || 'imap.gmail.com',
   port: parseInt(process.env.IMAP_PORT || '993'),
   tls: process.env.IMAP_TLS !== 'false',
   tlsOptions: { rejectUnauthorized: false }
 };
 
-// Regex patterns for verification codes
-const CODE_PATTERNS = [
-  /\b(\d{6})\b/g,                    // 6-digit code
-  /\b(\d{8})\b/g,                    // 8-digit code
-  /\b(?:code|verification|otp|密码|验证码)[:\s]*(\d{6,8})\b/gi,
-  /\b(\d{4})\s+(\d{4})\b/g           // Spaced 8-digit (e.g., 1234 5678)
-];
-
-// Regex for verification links
-const LINK_PATTERNS = [
-  /https?:\/\/[^\s<>"']+\/verify[^\s<>"']*/gi,
-  /https?:\/\/[^\s<>"']+\/confirm[^\s<>"']*/gi,
-  /https?:\/\/[^\s<>"']+\/reset[^\s<>"']*/gi,
-  /https?:\/\/[^\s<>"']+\/activate[^\s<>"']*/gi,
-  /https?:\/\/[^\s<>"']+\/auth[^\s<>"']*/gi
-];
+if (!IMAP_CONFIG.user || !IMAP_CONFIG.password) {
+  console.error('Error: IMAP_USER and IMAP_PASS must be set in .env.local');
+  process.exit(1);
+}
 
 /**
- * Parse email body to extract verification code
+ * Extract verification code from email body
+ * Looks for 6-8 digit codes in common patterns
  */
-function extractCode(body) {
-  if (!body) return null;
+function extractCode(text) {
+  if (!text) return null;
   
-  // Combine plain text and HTML (strip tags)
-  const text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  // Patterns for common verification codes
+  const patterns = [
+    /\b(\d{6})\b/g,           // 6 digits
+    /\b(\d{8})\b/g,           // 8 digits
+    /code[:\s]*(\d{6,8})/gi,  // "code: 123456"
+    /verification[:\s]*(\d{6,8})/gi,
+    /your code is (\d{6,8})/gi,
+    /代币为 (\d{6})/g,        // Chinese "token is X"
+  ];
   
-  for (const pattern of CODE_PATTERNS) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      const code = match[1] || match[0].replace(/\D/g, '');
-      // Filter out common non-code numbers (years, dates, etc.)
-      if (code.length >= 6 && code.length <= 8 && !/^20\d{2}$/.test(code)) {
-        return code;
+  for (const pattern of patterns) {
+    const matches = text.match(pattern);
+    if (matches && matches.length > 0) {
+      // Extract the number from the match
+      const match = matches[0];
+      const numberMatch = match.match(/(\d{6,8})/);
+      if (numberMatch) {
+        return numberMatch[1];
       }
     }
   }
+  
   return null;
 }
 
 /**
  * Extract verification links from email body
  */
-function extractLinks(body) {
-  if (!body) return [];
+function extractLinks(text) {
+  if (!text) return [];
   
-  const links = new Set();
+  const urlPattern = /https?:\/\/[^\s<>"'}\]]+/gi;
+  const matches = text.match(urlPattern) || [];
   
-  for (const pattern of LINK_PATTERNS) {
-    const matches = body.match(pattern);
-    if (matches) {
-      matches.forEach(link => links.add(link));
-    }
-  }
-  
-  // Also extract generic URLs that might be verification links
-  const genericUrlPattern = /https?:\/\/[^\s<>"']+/g;
-  const genericMatches = body.match(genericUrlPattern) || [];
-  genericMatches.forEach(url => {
-    const lowerUrl = url.toLowerCase();
-    if (lowerUrl.includes('verify') || lowerUrl.includes('confirm') || 
-        lowerUrl.includes('reset') || lowerUrl.includes('activate') ||
-        lowerUrl.includes('auth') || lowerUrl.includes('token') ||
-        lowerUrl.includes('email')) {
-      links.add(url);
-    }
-  });
-  
-  return Array.from(links).slice(0, 5); // Limit to 5 links
+  // Filter to likely verification links
+  return matches.filter(url => 
+    url.includes('verify') || 
+    url.includes('confirm') || 
+    url.includes('auth') ||
+    url.includes('login') ||
+    url.includes('signup')
+  ).slice(0, 5);
 }
 
 /**
@@ -96,18 +84,13 @@ async function fetchEmails(service, limit = 50) {
     const imap = new Imap(IMAP_CONFIG);
     
     imap.once('ready', () => {
-      // Open inbox
       imap.openBox('INBOX', false, async (err, box) => {
         if (err) {
           imap.end();
           return reject(err);
         }
         
-        // Search all recent emails, then filter locally
-        const searchCriteria = ['ALL'];
-        
-        // Fetch recent emails
-        imap.search(searchCriteria, (err, results) => {
+        imap.search(['ALL'], (err, results) => {
           if (err) {
             imap.end();
             return reject(err);
@@ -118,62 +101,61 @@ async function fetchEmails(service, limit = 50) {
             return resolve([]);
           }
           
-          // Get the most recent N emails
           const recentUids = results.slice(-limit);
+          const fet = imap.fetch(recentUids, { bodies: 'TEXT' });
           
-          const fet = imap.fetch(recentUids, {
-            bodies: '',
-            struct: true
-          });
-          
-          const emails = [];
+          const emailPromises = [];
           
           fet.on('message', (msg, seqno) => {
-            let subject = '';
-            let date = '';
-            let from = '';
-            let body = '';
-            
-            msg.on('body', (stream, info) => {
+            const emailPromise = new Promise((resolveEmail) => {
               let buffer = '';
-              stream.on('data', (chunk) => {
-                buffer += chunk.toString('utf8');
-              });
-              stream.on('end', async () => {
-                try {
-                  const parsed = await simpleParser(buffer);
-                  subject = parsed.subject || '(No Subject)';
-                  date = parsed.date ? parsed.date.toISOString().split('T')[0] : '';
-                  from = parsed.from?.text || '';
-                  body = parsed.text || parsed.html || '';
-                  
-                  const code = extractCode(body);
-                  const links = extractLinks(body);
-                  
-                  // Filter by service if specified (search in to, from, subject, body)
-                  const to = parsed.to?.text || '';
-                  const from = parsed.from?.text || '';
-                  const fullText = subject + ' ' + from + ' ' + to + ' ' + body;
-                  
-                  if (code && (!service || fullText.toLowerCase().includes(service.toLowerCase()))) {
-                    emails.push({
-                      code,
-                      subject,
-                      date,
-                      from,
-                      links: links.length > 0 ? links : undefined
-                    });
+              
+              msg.on('body', (stream) => {
+                stream.on('data', (chunk) => {
+                  buffer += chunk.toString('utf8');
+                });
+                stream.on('end', async () => {
+                  try {
+                    const parsed = await simpleParser(buffer);
+                    const subject = parsed.subject || '(No Subject)';
+                    const date = parsed.date?.toISOString() || '';
+                    const from = parsed.from?.text || '';
+                    const to = parsed.to?.text || '';
+                    const body = parsed.text || parsed.html || '';
+                    const rawLower = buffer.toLowerCase();
+                    
+                    const code = extractCode(body);
+                    const fullText = (subject + ' ' + from + ' ' + body + ' ' + to).toLowerCase();
+                    
+                    // Check if service matches in any field
+                    const serviceMatch = !service || 
+                      fullText.includes(service.toLowerCase()) ||
+                      rawLower.includes(service.toLowerCase());
+                    
+                    if (code && (!service || serviceMatch)) {
+                      resolveEmail({
+                        code,
+                        subject,
+                        date: date ? date.split('T')[0] : '',
+                        from,
+                        links: extractLinks(body).slice(0, 5)
+                      });
+                    } else {
+                      resolveEmail(null);
+                    }
+                  } catch (e) {
+                    resolveEmail(null);
                   }
-                } catch (e) {
-                  // Skip parsing errors
-                }
+                });
               });
             });
+            
+            emailPromises.push(emailPromise);
           });
           
-          fet.once('end', () => {
+          fet.once('end', async () => {
+            const emails = (await Promise.all(emailPromises)).filter(e => e !== null);
             imap.end();
-            // Sort by date (most recent first)
             emails.sort((a, b) => b.date.localeCompare(a.date));
             resolve(emails);
           });
@@ -181,10 +163,7 @@ async function fetchEmails(service, limit = 50) {
       });
     });
     
-    imap.once('error', (err) => {
-      reject(err);
-    });
-    
+    imap.once('error', (err) => reject(err));
     imap.connect();
   });
 }
@@ -196,7 +175,7 @@ async function main() {
   const argv = yargs(hideBin(process.argv))
     .option('service', {
       alias: 's',
-      description: 'Service/alias prefix to filter emails (e.g., google, amazon)',
+      description: 'Service/alias prefix to filter emails (e.g., google, amazon, chatgpt)',
       type: 'string'
     })
     .option('limit', {
@@ -212,27 +191,15 @@ async function main() {
     })
     .option('quiet', {
       alias: 'q',
-      description: 'Output only codes (one per line)',
+      description: 'Only output the code',
       type: 'boolean',
       default: false
     })
     .help()
     .alias('help', 'h')
-    .version('1.0.0')
-    .example('codefetch --service google', 'Search for verification codes in Google-related emails')
-    .example('codefetch -s amazon -l 20', 'Search last 20 Amazon emails')
-    .example('codefetch --links', 'Include verification links in output')
-    .epilogue('For more information, see docs/codefetch.md')
     .argv;
   
   const { service, limit, links, quiet } = argv;
-  
-  // Validate IMAP configuration
-  if (!IMAP_CONFIG.user || !IMAP_CONFIG.password || !IMAP_CONFIG.host) {
-    console.error('Error: Missing IMAP configuration in .env.local');
-    console.error('Required: IMAP_USER, IMAP_PASS, IMAP_HOST, IMAP_PORT (optional)');
-    process.exit(1);
-  }
   
   try {
     const emails = await fetchEmails(service, limit);
@@ -244,24 +211,27 @@ async function main() {
       process.exit(0);
     }
     
-    // Output results
-    for (const email of emails) {
-      if (quiet) {
-        console.log(email.code);
-      } else {
+    if (quiet) {
+      // Just output the first code
+      console.log(emails[0].code);
+    } else {
+      // Output full details
+      for (const email of emails) {
         console.log(`Code: ${email.code}`);
-        console.log(`Subject: ${email.subject}`);
-        console.log(`Date: ${email.date}`);
-        if (links && email.links) {
-          console.log(`Links: ${email.links.join(', ')}`);
+        if (email.subject) console.log(`Subject: ${email.subject}`);
+        if (email.date) console.log(`Date: ${email.date}`);
+        if (email.from) console.log(`From: ${email.from}`);
+        if (links && email.links?.length) {
+          console.log('Links:');
+          email.links.forEach(link => console.log(`  ${link}`));
         }
         console.log('---');
       }
     }
   } catch (err) {
-    console.error('Error fetching emails:', err.message);
+    console.error('Error:', err.message);
     process.exit(1);
   }
 }
 
-main().catch(console.error);
+main();
