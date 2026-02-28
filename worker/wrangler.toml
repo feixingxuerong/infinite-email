@@ -9,5 +9,5 @@ compatibility_date = "2026-02-28"
 [[d1_databases]]
 binding = "DB"
 database_name = "infinite_email"
-database_id = ""
+database_id = "b7cb4c31-0fe1-4ea6-a29d-9471e2f58907"
 migrations_dir = "src/migrations"

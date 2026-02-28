@@ -103,10 +103,8 @@ async function fetchEmails(service, limit = 50) {
           return reject(err);
         }
         
-        // Search for emails matching service/alias
-        const searchCriteria = service 
-          ? ['ALL', ['SUBJECT', service]]
-          : ['ALL'];
+        // Search all recent emails, then filter locally
+        const searchCriteria = ['ALL'];
         
         // Fetch recent emails
         imap.search(searchCriteria, (err, results) => {
@@ -152,7 +150,12 @@ async function fetchEmails(service, limit = 50) {
                   const code = extractCode(body);
                   const links = extractLinks(body);
                   
-                  if (code) {
+                  // Filter by service if specified (search in to, from, subject, body)
+                  const to = parsed.to?.text || '';
+                  const from = parsed.from?.text || '';
+                  const fullText = subject + ' ' + from + ' ' + to + ' ' + body;
+                  
+                  if (code && (!service || fullText.toLowerCase().includes(service.toLowerCase()))) {
                     emails.push({
                       code,
                       subject,
