@@ -1,0 +1,20 @@
+{
+  "name": "auto-register-chatgpt",
+  "version": "1.0.0",
+  "description": "Auto-register ChatGPT accounts using generated aliases and IMAP verification",
+  "main": "src/run.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.mjs",
+    "register": "node src/run.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.1",
+    "dotenv": "^16.4.7"
+  },
+  "keywords": ["chatgpt", "automation", "registration", "playwright"],
+  "author": "",
+  "license": "MIT"
+}

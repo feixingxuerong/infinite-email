@@ -1,0 +1,13 @@
+{
+  "name": "@feixingxuerong/infinite-email",
+  "version": "1.0.0",
+  "description": "Infinite email alias management system",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "register:chatgpt": "cd tools/auto-register-chatgpt && npm run start"
+  },
+  "keywords": ["email", "alias", "chatgpt", "automation"],
+  "author": "",
+  "license": "MIT"
+}
