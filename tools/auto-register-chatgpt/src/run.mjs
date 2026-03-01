@@ -29,7 +29,7 @@ const ACCOUNT_FILE = path.resolve(OUTPUTS_DIR, 'chatgpt-account.json');
 // Config Loading (Priority: tool dir > project root)
 // ============================================
 function loadConfig() {
-  const toolEnvPath = path.resolve(__dirname, '.env.local');
+  const toolEnvPath = path.resolve(__dirname, '../.env.local');
   const rootEnvPath = path.resolve(PROJECT_ROOT, '.env.local');
   
   // Try tool directory first
@@ -98,7 +98,7 @@ async function generateAlias(config) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.adminToken}`
+      'X-Admin-Token': config.adminToken
     },
     body: JSON.stringify({ service: 'chatgpt', count: 1 })
   });
@@ -114,8 +114,12 @@ async function generateAlias(config) {
   }
   
   const alias = data.aliases[0];
-  const fullEmail = `${alias.name}@${config.domain}`;
+  const fullEmail = alias.address || (alias.alias ? `${alias.alias}@${config.domain}` : null);
   
+  if (!fullEmail) {
+    throw new Error('Alias response missing address');
+  }
+
   console.log(`Generated alias: ${maskEmail(fullEmail)}`);
   
   return { alias, fullEmail };
@@ -262,6 +266,38 @@ async function registerWithPlaywright(config, email, password) {
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext();
   const page = await context.newPage();
+  page.setDefaultTimeout(20000);
+
+  async function clickFirst(selectors) {
+    for (const selector of selectors) {
+      try {
+        const loc = page.locator(selector).first();
+        if (await loc.count()) {
+          await Promise.all([
+            page.waitForLoadState('domcontentloaded').catch(() => {}),
+            loc.click({ timeout: 5000 }).catch(() => {})
+          ]);
+          return true;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    return false;
+  }
+
+  async function fillFirst(selectors, value) {
+    for (const selector of selectors) {
+      try {
+        const loc = page.locator(selector).first();
+        if (await loc.count()) {
+          await loc.fill(value);
+          return true;
+        }
+      } catch (e) {}
+    }
+    return false;
+  }
   
   try {
     // Navigate to ChatGPT signup
@@ -276,27 +312,18 @@ async function registerWithPlaywright(config, email, password) {
     const signupButtonSelectors = [
       'button:has-text("Sign up")',
       'button:has-text("Sign Up")',
-      'a:has-text',
-      '[data("Sign up")-testid="signup-button"]',
+      'a:has-text("Sign up")',
+      '[data-testid="signup-button"]',
       'button:has-text("Create account")',
       'a:has-text("Create account")'
     ];
     
-    let signupClicked = false;
-    for (const selector of signupButtonSelectors) {
-      try {
-        const button = await page.$(selector);
-        if (button) {
-          await button.click();
-          signupClicked = true;
-          console.log('Clicked signup button');
-          break;
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
+    const signupClicked = await clickFirst(signupButtonSelectors);
+    if (signupClicked) {
+      console.log('Clicked signup button');
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
     }
-    
+
     if (!signupClicked) {
       // Try to find any prominent button/link
       console.log('Trying alternative signup method...');
@@ -314,30 +341,18 @@ async function registerWithPlaywright(config, email, password) {
       'input[id="email"]'
     ];
     
-    for (const selector of emailInputSelectors) {
-      const input = await page.$(selector);
-      if (input) {
-        await input.fill(email);
-        console.log('Email filled');
-        break;
-      }
-    }
-    
+    await fillFirst(emailInputSelectors, email);
+    console.log('Email filled');
+
     // Click continue/submit
     const continueButtonSelectors = [
       'button:has-text("Continue")',
       'button[type="submit"]',
       'button:has-text("Continue with email")'
     ];
-    
-    for (const selector of continueButtonSelectors) {
-      const button = await page.$(selector);
-      if (button) {
-        await button.click();
-        console.log('Clicked continue');
-        break;
-      }
-    }
+
+    const cont1 = await clickFirst(continueButtonSelectors);
+    if (cont1) console.log('Clicked continue');
     
     await page.waitForTimeout(2000);
     
@@ -349,24 +364,12 @@ async function registerWithPlaywright(config, email, password) {
       'input[placeholder*="password"]'
     ];
     
-    for (const selector of passwordInputSelectors) {
-      const input = await page.$(selector);
-      if (input) {
-        await input.fill(password);
-        console.log('Password filled');
-        break;
-      }
-    }
-    
+    await fillFirst(passwordInputSelectors, password);
+    console.log('Password filled');
+
     // Click continue again
-    for (const selector of continueButtonSelectors) {
-      const button = await page.$(selector);
-      if (button) {
-        await button.click();
-        console.log('Clicked continue after password');
-        break;
-      }
-    }
+    const cont2 = await clickFirst(continueButtonSelectors);
+    if (cont2) console.log('Clicked continue after password');
     
     // Wait for verification code page
     console.log('Waiting for verification code page...');

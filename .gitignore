@@ -1,0 +1,15 @@
+# local secrets
+.env.local
+**/.env.local
+secrets/
+
+# dependencies
+node_modules/
+**/node_modules/
+
+# outputs (may contain credentials)
+outputs/*.json
+
+# playwright
+playwright-report/
+.test-results/
